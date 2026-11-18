@@ -85,6 +85,37 @@ flowchart TD
 
 ---
 
+## Orchestration — Lakeflow Job
+
+The pipeline runs **daily at 06:30 UK time** as a Lakeflow Job on serverless compute. It's defined as code in a Declarative Automation Bundle (`databricks.yml` + `resources/gridpulse_daily.job.yml`).
+
+```mermaid
+flowchart LR
+    A[ingest_raw<br/>rolling 2-day API window] --> B[load_bronze<br/>Auto Loader, availableNow]
+    B --> C[build_silver<br/>quality rules + MERGE]
+    C --> D[build_gold<br/>UK-time aggregates]
+    D --> E[freshness_check<br/>fail if stale/incomplete]
+```
+
+| Design choice | Why |
+|---|---|
+| **Rolling `lookback_days` window** (job parameter, default 2) | NESO publishes actuals late; re-fetching recent days lets Silver upgrade forecast-only periods |
+| **Auto Loader with `trigger(availableNow=True)`** | Processes only new raw files (checkpointed), then stops, so it's incremental at batch cost |
+| **`foreachBatch` + Delta `MERGE` on `record_id`** | Replays and retries insert zero duplicates |
+| **Task retries** (API task: 2 retries, 5 min apart) | Transient API failures heal without a human |
+| **`max_concurrent_runs: 1` + queueing** | Two overlapping runs can't race on the same MERGE |
+| **Freshness check as the last task** | A run that "succeeds" with stale data fails loudly and emails the owner |
+| **Dev target in development mode** | Schedules are paused and names prefixed, so a laptop deploy never runs production by accident |
+
+```bash
+databricks auth login --host https://<your-workspace>
+databricks bundle validate
+databricks bundle deploy -t dev
+databricks bundle run gridpulse_daily -t dev
+```
+
+---
+
 ## Data quality issues found and fixed
 
 1. **Null values passing validation.** A rule using `isin()` let rows with a null `intensity_index` through, because `isin` on null returns null (three-valued logic) rather than false. Fixed by checking for null first.
@@ -102,6 +133,14 @@ notebooks/
   03_silver_transform       # validation, quarantine, best snapshot, upsert
   04_gold                   # UK-time profile and daily summary
   05_findings               # key findings and charts
+pipelines/                  # scheduled job tasks
+  01_ingest_raw             # rolling-window API call → immutable raw JSON
+  02_load_bronze_autoloader # Auto Loader → Bronze MERGE
+  05_freshness_check        # stale/incomplete data fails the job
+src/gridpulse/              # tested logic: ingestion.py, bronze.py, transformations.py
+tests/                      # pytest (runs in GitHub Actions)
+resources/                  # Lakeflow Job definition
+databricks.yml              # bundle config (dev / prod targets)
 images/                     # chart exports used in this README
 ```
 
@@ -123,9 +162,8 @@ Every step is idempotent and safe to rerun.
 
 ## Next steps
 
-- Replace batch file reads with **Auto Loader** for incremental ingestion.
-- Parameterised daily ingestion (rolling two-day window to capture late-arriving actuals) scheduled as a **Lakeflow Job** (Ingest → Silver → Gold).
-- **CI/CD:** pytest for transformations, GitHub Actions, and Declarative Automation Bundles.
+- **GridPulse Copilot:** plain-English questions → LLM-generated SQL over the Gold tables, scored on a fixed test set.
+- **CD:** deploy the bundle from GitHub Actions on merge to `main`.
 - Add NESO **regional** data and backfill a full year.
 
 ---

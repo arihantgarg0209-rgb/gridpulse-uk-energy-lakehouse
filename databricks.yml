@@ -1,0 +1,36 @@
+# Declarative Automation Bundle (formerly Databricks Asset Bundles) for GridPulse.
+# Deploy:  databricks bundle validate && databricks bundle deploy -t dev
+# Run now: databricks bundle run gridpulse_daily -t dev
+
+bundle:
+  name: gridpulse
+
+include:
+  - resources/*.yml
+
+sync:
+  include:
+    - src/**
+    - notebooks/**
+    - pipelines/**
+
+variables:
+  lookback_days:
+    description: Days of NESO data re-fetched on each run (captures late actuals)
+    default: "2"
+
+targets:
+  dev:
+    # Development mode prefixes resource names with [dev <user>] and PAUSES schedules,
+    # so deploying from a laptop never starts a real daily run by accident.
+    mode: development
+    default: true
+    workspace:
+      # Set this to your workspace URL, or use a CLI profile: databricks auth login
+      host: https://YOUR-WORKSPACE.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://YOUR-WORKSPACE.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
