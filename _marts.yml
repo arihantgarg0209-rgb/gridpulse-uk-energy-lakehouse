@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: fct_carbon_intensity
+    description: Fact table at half-hour grain with forecast, actual and forecast-error measures.
+    columns:
+      - name: period_id
+        data_tests: [unique, not_null]
+      - name: uk_date
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: uk_date
+      - name: intensity_index
+        description: NESO band for the period, lower-cased by the Silver pipeline.
+        data_tests:
+          - accepted_values:
+              values: ['very low', 'low', 'moderate', 'high', 'very high']
+
+  - name: dim_date
+    description: One row per UK calendar day with weekday/weekend attributes.
+    columns:
+      - name: uk_date
+        data_tests: [unique, not_null]
+
+  - name: half_hour_intensity_profile
+    description: Average carbon intensity for each UK half-hour clock time; cleanliness_rank 1 = cleanest.
+    columns:
+      - name: uk_time_slot
+        data_tests: [unique, not_null]
+      - name: cleanliness_rank
+        data_tests: [not_null]
+
+  - name: daily_intensity_summary
+    description: One row per UK day with average, cleanest and dirtiest half-hour, and forecast MAE.
+    columns:
+      - name: uk_date
+        data_tests: [unique, not_null]
+
+  - name: weekday_vs_weekend
+    description: Average carbon intensity on weekdays versus weekends (fact joined to dim_date).
+    columns:
+      - name: is_weekend
+        data_tests: [unique, not_null]

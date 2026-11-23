@@ -41,7 +41,8 @@ flowchart TD
     A[NESO Carbon Intensity API] -->|Python requests| B[Raw JSON files<br/>Unity Catalog volume<br/>immutable, with lineage]
     B -->|explicit schema, explode_outer,<br/>SHA-256 record_id, Delta MERGE| C[Bronze<br/>one row per snapshot]
     C -->|quality rules, quarantine,<br/>best-snapshot selection, upsert| D[Silver<br/>one row per half hour]
-    D -->|UTC → UK time,<br/>aggregations, MIN_BY / MAX_BY| E[Gold<br/>time-of-day profile + daily summary]
+    D -->|dbt: staging view<br/>UTC → UK time| S[stg_carbon_intensity]
+    S -->|dbt models + 22 tests| E[Gold<br/>fact + date dimension + 3 marts]
     E --> F[Findings & charts]
     C -.->|failed rules| Q[Quarantine table<br/>with rejection reason]
 ```
@@ -53,6 +54,10 @@ flowchart TD
 | Silver | `gridpulse.silver.carbon_intensity` | One row per **half hour** | Validated, deduplicated, best snapshot per period |
 | Gold | `gridpulse.gold.half_hour_intensity_profile` | One row per **UK clock time** (48) | Ranked cleanest → dirtiest time of day |
 | Gold | `gridpulse.gold.daily_intensity_summary` | One row per **UK day** | Daily stats, cleanest/dirtiest slot, forecast MAE |
+| Staging (dbt) | `gridpulse.staging.stg_carbon_intensity` | One row per **half hour** (view) | The one place UTC is converted to UK time |
+| Gold (dbt) | `gridpulse.gold.fct_carbon_intensity` | One row per **half hour** | Fact table: forecast, actual and error measures |
+| Gold (dbt) | `gridpulse.gold.dim_date` | One row per **UK day** | Date dimension: weekday, weekend, month |
+| Gold (dbt) | `gridpulse.gold.weekday_vs_weekend` | One row per **day type** | Fact joined to dim_date |
 
 ---
 
@@ -77,11 +82,16 @@ flowchart TD
 - Forecast error and absolute error calculated per period.
 - **Upsert** via `MERGE` on `period_id`, updating only when a different snapshot is selected (idempotent).
 
-### Gold
+### Gold — modelled in dbt
+The Gold layer is a **dbt project** (`dbt/`) that runs as a task in the Lakeflow Job on a Databricks SQL warehouse.
+- **One staging model** (`stg_carbon_intensity`, a view) converts UTC to UK local time once. Every Gold model reads it with `ref()`, so the logic is never duplicated and dbt builds models in dependency order.
+- **Star schema:** `fct_carbon_intensity` (half-hour grain, measures) + `dim_date` (descriptive attributes), joined in `weekday_vs_weekend`.
+- **22 automated data tests** run with every build (`dbt build`): `unique`/`not_null` keys, `accepted_values` for the NESO intensity band, a `relationships` test from fact to dimension, and custom SQL tests (plausible intensity range, exactly 48 half-hour slots). A failed test stops the job before bad data reaches downstream users.
+- No credentials are stored: Databricks generates the dbt connection profile from the task's SQL warehouse, catalog and schema.
 - Converts UTC to UK local time with `from_utc_timestamp(..., 'Europe/London')`, handling British Summer Time automatically.
 - **Half-hour profile:** average/min/max actual intensity per UK clock time, ranked with `RANK()`.
 - **Daily summary:** completeness flag (`>= 46` periods to allow for clock-change days), `MIN_BY` / `MAX_BY` for cleanest and dirtiest slot, forecast MAE.
-- Rebuilt with `CREATE OR REPLACE` (small, fully derived tables) and protected by a quality gate (exactly 48 slots, no null averages, one row per date).
+- Gold tables are small and fully derived, so they're materialized as tables and rebuilt each run. (The original notebook version, `notebooks/04_gold.py`, is kept for reference.)
 
 ---
 
@@ -93,7 +103,7 @@ The pipeline runs **daily at 06:30 UK time** as a Lakeflow Job on serverless com
 flowchart LR
     A[ingest_raw<br/>rolling 2-day API window] --> B[load_bronze<br/>Auto Loader, availableNow]
     B --> C[build_silver<br/>quality rules + MERGE]
-    C --> D[build_gold<br/>UK-time aggregates]
+    C --> D[dbt_build<br/>staging + Gold models + 22 tests]
     D --> E[freshness_check<br/>fail if stale/incomplete]
 ```
 
@@ -139,6 +149,10 @@ pipelines/                  # scheduled job tasks
   05_freshness_check        # stale/incomplete data fails the job
 src/gridpulse/              # tested logic: ingestion.py, bronze.py, transformations.py
 tests/                      # pytest (runs in GitHub Actions)
+dbt/                        # dbt project: staging + Gold models, tests (Silver → Gold)
+  models/staging/           # sources + stg_carbon_intensity (UTC → UK time)
+  models/marts/             # fact, date dimension and Gold marts, with tests in _marts.yml
+  tests/                    # custom SQL data tests
 resources/                  # Lakeflow Job definition
 databricks.yml              # bundle config (dev / prod targets)
 images/                     # chart exports used in this README
