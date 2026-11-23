@@ -1,4 +1,4 @@
-# Lakeflow Job: daily NESO ingest -> Bronze -> Silver -> Gold -> freshness check.
+# Lakeflow Job: daily NESO ingest -> Bronze -> Silver -> dbt (staging + Gold + tests) -> freshness check.
 # No cluster is defined, so every task runs on serverless compute.
 
 resources:
@@ -53,14 +53,32 @@ resources:
           notebook_task:
             notebook_path: ../notebooks/03_silver_transform.ipynb
 
-        - task_key: build_gold
+        # Silver -> Gold is now modelled in dbt (replaces the old 04_gold.py notebook task).
+        # `dbt build` runs every model AND its tests in dependency order; a failed test stops the run.
+        # No profiles_directory is set, so Databricks generates the dbt connection profile from
+        # the SQL warehouse, catalog and schema below (no token stored anywhere).
+        - task_key: dbt_build
           depends_on:
             - task_key: build_silver
-          notebook_task:
-            notebook_path: ../notebooks/04_gold.py
+          dbt_task:
+            project_directory: ../dbt
+            commands:
+              - "dbt build"
+            warehouse_id: ${var.warehouse_id}
+            catalog: gridpulse
+            schema: gold
+          environment_key: dbt_env
 
         - task_key: freshness_check
           depends_on:
-            - task_key: build_gold
+            - task_key: dbt_build
           notebook_task:
             notebook_path: ../pipelines/05_freshness_check.py
+
+      # Serverless environment for the dbt task: installs the dbt Databricks adapter.
+      environments:
+        - environment_key: dbt_env
+          spec:
+            environment_version: "4"
+            dependencies:
+              - dbt-databricks>=1.8.0,<2.0.0
