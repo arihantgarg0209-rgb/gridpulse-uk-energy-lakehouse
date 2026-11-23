@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: stg_carbon_intensity
+    description: Silver carbon intensity with UK local time columns added. Materialized as a view.
+    columns:
+      - name: period_id
+        data_tests: [unique, not_null]
+      - name: uk_date
+        description: Calendar date in Europe/London (handles British Summer Time).
+        data_tests: [not_null]
+      - name: uk_time_slot
+        description: Half-hour clock time in UK local time, e.g. 13:30.
+        data_tests: [not_null]

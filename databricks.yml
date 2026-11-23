@@ -13,8 +13,12 @@ sync:
     - src/**
     - notebooks/**
     - pipelines/**
+    - dbt/**
 
 variables:
+  warehouse_id:
+    description: SQL warehouse that runs the dbt task
+    default: c08349c78f5f3fa9
   lookback_days:
     description: Days of NESO data re-fetched on each run (captures late actuals)
     default: "2"
@@ -27,10 +31,10 @@ targets:
     default: true
     workspace:
       # Set this to your workspace URL, or use a CLI profile: databricks auth login
-      host: https://YOUR-WORKSPACE.cloud.databricks.com
+      host: https://dbc-54cccc3c-3d75.cloud.databricks.com
 
   prod:
     mode: production
     workspace:
-      host: https://YOUR-WORKSPACE.cloud.databricks.com
+      host: https://dbc-54cccc3c-3d75.cloud.databricks.com
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

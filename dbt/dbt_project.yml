@@ -1,0 +1,23 @@
+# dbt project for the GridPulse UK Silver -> Gold modelling layer.
+# Runs as the dbt_build task in the gridpulse-daily Lakeflow Job, on a Databricks SQL warehouse.
+name: gridpulse
+version: "1.0.0"
+config-version: 2
+
+# Databricks generates this profile automatically for the job's dbt task
+# (using the task's SQL warehouse, catalog and schema), so no profiles.yml or token is stored here.
+profile: gridpulse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  gridpulse:
+    staging:
+      +materialized: view      # cheap, always up to date, no data copied
+      +schema: staging         # -> gridpulse.staging
+    marts:
+      +materialized: table     # Gold tables that dashboards query
+      +schema: gold            # -> gridpulse.gold

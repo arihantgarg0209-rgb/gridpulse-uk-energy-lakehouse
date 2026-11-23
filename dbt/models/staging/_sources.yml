@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: silver
+    database: gridpulse          # in dbt-databricks, "database" = Unity Catalog catalog
+    schema: silver
+    description: Validated data produced by the PySpark Silver pipeline (not built by dbt).
+    tables:
+      - name: carbon_intensity
+        description: One validated row per half-hour GB settlement period from the NESO Carbon Intensity API. Times are UTC.
+        loaded_at_field: silver_processed_at_utc
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: period_id
+            description: SHA-256 of period start and end; one row per half-hour.
+            data_tests: [unique, not_null]
+          - name: period_start_utc
+            description: Start of the half-hour period, in UTC.
+            data_tests: [not_null]
